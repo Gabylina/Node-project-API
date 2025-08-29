@@ -4,6 +4,7 @@ on:
   push:
     paths:
       - 'src/**'
+      - 'server.js'
       - 'package.json'
       - 'package-lock.json'
       - '.github/workflows/run-and-check.yml'
@@ -29,7 +30,7 @@ jobs:
       - name: Start server (src/server.js)
         env:
           PORT: 3000
-          CI_SMOKE: "1"   # si tu app lo usa para saltar la conexión a DB
+          CI_SMOKE: "1"   # evita efectos (DB, colas) si tu app lo respeta
         run: |
           node src/server.js > server.log 2>&1 & echo $! > .pidfile
           sleep 1
@@ -51,12 +52,13 @@ jobs:
           tail -n 200 server.log || true
           exit 1
 
-      # Request simple para ver respuesta (código no importa, es para log)
-      - name: Curl root
+      # Verifica ruta real del router
+      - name: Curl /api/ping
         if: success()
         run: |
-          echo "== curl / =="
-          curl -i -s http://127.0.0.1:3000/ || true
+          code=$(curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:3000/api/ping || true)
+          echo "HTTP $code"
+          [ "$code" = "200" ]
 
       # Apaga el proceso y muestra logs finales siempre
       - name: Stop server (always)
