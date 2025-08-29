@@ -2,6 +2,7 @@
   "name": "express.js-project",
   "version": "1.0.0",
   "description": "Scaffold vacío para migración con n8n",
+  "type": "module",
   "main": "server.js",
   "scripts": {
     "dev": "nodemon server.js",
