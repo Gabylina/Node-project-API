@@ -24,17 +24,13 @@ jobs:
 
       - name: Install deps
         run: |
-          if [ -f package-lock.json ]; then
-            npm ci
-          else
-            npm i
-          fi
+          npm install --no-audit --no-fund
 
       # Arranca tu servidor en background
       - name: Start server
         env:
           PORT: 3000
-          CI_SMOKE: "1"   # si tu código usa esto para saltar conexiones a DB, quedará activo aquí
+          CI_SMOKE: "1"   # si tu código necesita saltar conexiones reales
         run: |
           node src/server.js & echo $! > .pidfile
 
@@ -43,16 +39,16 @@ jobs:
         run: |
           for i in {1..60}; do
             if (echo > /dev/tcp/127.0.0.1/3000) >/dev/null 2>&1; then
-              echo "Port 3000 is open"; exit 0
+              echo "✅ Port 3000 is open"; exit 0
             fi
             sleep 0.5
           done
-          echo "Server did not open port 3000 in time"; exit 1
+          echo "❌ Server did not open port 3000 in time"; exit 1
 
       # (Opcional) hace una request a la raíz; cualquier status nos sirve para ver logs
       - name: Curl root
         run: |
-          curl -i -s -o /dev/null -w "HTTP %{http_code}\n" http://127.0.0.1:3000/ || true
+          curl -i -s http://127.0.0.1:3000/ || true
 
       # Siempre intenta apagar el server
       - name: Stop server
