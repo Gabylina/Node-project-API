@@ -1,0 +1,63 @@
+name: Run API (Smoke)
+
+on:
+  push:
+    paths:
+      - 'src/**'
+      - 'package.json'
+      - 'package-lock.json'
+      - '.github/workflows/run-and-check.yml'
+  workflow_dispatch: {}
+
+jobs:
+  run-and-check:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+
+      - name: Install deps
+        run: |
+          if [ -f package-lock.json ]; then
+            npm ci
+          else
+            npm i
+          fi
+
+      # Arranca tu servidor en background
+      - name: Start server
+        env:
+          PORT: 3000
+          CI_SMOKE: "1"   # si tu código usa esto para saltar conexiones a DB, quedará activo aquí
+        run: |
+          node src/server.js & echo $! > .pidfile
+
+      # Espera a que el puerto 3000 se abra (hasta ~30s)
+      - name: Wait for port
+        run: |
+          for i in {1..60}; do
+            if (echo > /dev/tcp/127.0.0.1/3000) >/dev/null 2>&1; then
+              echo "Port 3000 is open"; exit 0
+            fi
+            sleep 0.5
+          done
+          echo "Server did not open port 3000 in time"; exit 1
+
+      # (Opcional) hace una request a la raíz; cualquier status nos sirve para ver logs
+      - name: Curl root
+        run: |
+          curl -i -s -o /dev/null -w "HTTP %{http_code}\n" http://127.0.0.1:3000/ || true
+
+      # Siempre intenta apagar el server
+      - name: Stop server
+        if: always()
+        run: |
+          if [ -f .pidfile ]; then
+            kill $(cat .pidfile) || true
+          fi
