@@ -4,6 +4,7 @@ on:
   push:
     paths:
       - 'src/**'
+      - 'server.js'
       - 'package.json'
       - 'package-lock.json'
       - '.github/workflows/run-and-check.yml'
@@ -17,6 +18,13 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Show tree (debug)
+        run: |
+          echo "== Repo tree =="
+          ls -lah
+          echo "== src/ tree (if exists) =="
+          [ -d src ] && ls -lah src || echo "no src/ dir"
+
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
@@ -26,28 +34,37 @@ jobs:
         run: |
           npm install --no-audit --no-fund
 
-      # Arranca tu servidor en background
-      - name: Start server
+      # Arranca el server en background (RAÍZ: server.js)
+      - name: Start server (background)
         env:
           PORT: 3000
-          CI_SMOKE: "1"   # si tu código necesita saltar conexiones reales
+          CI_SMOKE: "1"   # si tu código lo respeta, evitará conectar a DB
         run: |
-          node src/server.js & echo $! > .pidfile
+          node server.js > server.log 2>&1 & echo $! > .pidfile
+          sleep 1
+          echo "== First 50 lines of server.log =="
+          head -n 50 server.log || true
 
       # Espera a que el puerto 3000 se abra (hasta ~30s)
-      - name: Wait for port
+      - name: Wait for port 3000
         run: |
           for i in {1..60}; do
             if (echo > /dev/tcp/127.0.0.1/3000) >/dev/null 2>&1; then
-              echo "✅ Port 3000 is open"; exit 0
+              echo "✅ Port 3000 is open"
+              exit 0
             fi
             sleep 0.5
           done
-          echo "❌ Server did not open port 3000 in time"; exit 1
+          echo "❌ Server did not open port 3000 in time"
+          echo "== Last 200 lines of server.log =="
+          tail -n 200 server.log || true
+          exit 1
 
-      # (Opcional) hace una request a la raíz; cualquier status nos sirve para ver logs
+      # Golpea la raíz para ver respuesta (código no importa, es para log)
       - name: Curl root
+        if: success()
         run: |
+          echo "== curl / =="
           curl -i -s http://127.0.0.1:3000/ || true
 
       # Siempre intenta apagar el server
@@ -57,3 +74,5 @@ jobs:
           if [ -f .pidfile ]; then
             kill $(cat .pidfile) || true
           fi
+          echo "== Final 200 lines of server.log =="
+          [ -f server.log ] && tail -n 200 server.log || true
