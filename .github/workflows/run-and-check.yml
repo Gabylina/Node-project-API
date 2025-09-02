@@ -1,4 +1,4 @@
-name: Run API (Smoke)
+name: Run API (smoke)
 
 on:
   push:
@@ -13,31 +13,49 @@ on:
 jobs:
   run-and-check:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Setup Node
+      - name: Setup node
         uses: actions/setup-node@v4
         with:
-          node-version: '18'
+          node-version: 18
+          cache: 'npm'
 
       - name: Install deps
         run: npm install --no-audit --no-fund
 
-      # Arranca src/server.js en background y guarda logs
-      - name: Start server (src/server.js)
+      - name: Check required files
+        run: |
+          set -e
+          for f in \
+            src/app.js \
+            src/server.js \
+            src/routes/index.js \
+            src/controllers/Auth/index.js \
+            src/controllers/Project/index.js \
+            src/controllers/Task/index.js
+          do
+            if [ ! -f "$f" ]; then
+              echo "::error::Missing $f"
+              exit 1
+            fi
+          done
+          echo "All required files present ✅"
+
+      - name: Start server (background)
         env:
           PORT: 3000
-          CI_SMOKE: "1"   # evita efectos (DB, colas) si tu app lo respeta
+          CI_SMOKE: "1"
         run: |
           node src/server.js > server.log 2>&1 & echo $! > .pidfile
           sleep 1
           echo "== first lines of server.log =="
           head -n 60 server.log || true
 
-      # Espera a que el puerto 3000 se abra (máx ~30s)
       - name: Wait for port 3000
         run: |
           for i in {1..60}; do
@@ -52,20 +70,77 @@ jobs:
           tail -n 200 server.log || true
           exit 1
 
-      # Verifica ruta real del router
-      - name: Curl /api/ping
-        if: success()
+      - name: Hit endpoints (ping + auth + projects + tasks)
         run: |
-          code=$(curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:3000/api/ping || true)
-          echo "HTTP $code"
-          [ "$code" = "200" ]
+          set -euo pipefail
+          BASE="http://127.0.0.1:3000/api"
 
-      # Apaga el proceso y muestra logs finales siempre
+          echo "== /api/ping ==" 
+          code=$(curl -sS -o /dev/null -w "%{http_code}" "$BASE/ping")
+          test "$code" = "200"
+
+          echo "== /api/auth/register =="
+          EMAIL="ci+${GITHUB_RUN_ID}-${RANDOM}@example.com"
+          PASS="Secret123!"
+          code=$(curl -sS -o reg.json -w "%{http_code}" -H 'Content-Type: application/json' \
+            -d "{\"name\":\"CI User\",\"email\":\"$EMAIL\",\"password\":\"$PASS\"}" \
+            "$BASE/auth/register")
+          if [ "$code" != "201" ]; then
+            echo "::error::Register failed ($code)"; cat reg.json || true; exit 1
+          fi
+
+          echo "== /api/auth/login =="
+          code=$(curl -sS -o login.json -w "%{http_code}" -H 'Content-Type: application/json' \
+            -d "{\"email\":\"$EMAIL\",\"password\":\"$PASS\"}" \
+            "$BASE/auth/login")
+          if [ "$code" != "200" ]; then
+            echo "::error::Login failed ($code)"; cat login.json || true; exit 1
+          fi
+
+          echo "== /api/auth/me =="
+          code=$(curl -sS -o me.json -w "%{http_code}" "$BASE/auth/me")
+          test "$code" = "200"
+
+          echo "== GET /api/projects =="
+          code=$(curl -sS -o projects.json -w "%{http_code}" "$BASE/projects")
+          test "$code" = "200"
+
+          echo "== POST /api/projects =="
+          code=$(curl -sS -o project_new.json -w "%{http_code}" -H 'Content-Type: application/json' \
+            -d '{"name":"CI Project","description":"created from CI"}' \
+            "$BASE/projects")
+          test "$code" = "201"
+
+          echo "== GET /api/projects/proj-1/tasks =="
+          code=$(curl -sS -o tasks.json -w "%{http_code}" "$BASE/projects/proj-1/tasks")
+          test "$code" = "200"
+
+          echo "== POST /api/projects/proj-1/tasks =="
+          code=$(curl -sS -o task_new.json -w "%{http_code}" -H 'Content-Type: application/json' \
+            -d '{"title":"CI Task","description":"demo"}' \
+            "$BASE/projects/proj-1/tasks")
+          test "$code" = "201"
+
+          echo "== POST /api/projects/proj-1/tasks/task-1/status =="
+          code=$(curl -sS -o task_status.json -w "%{http_code}" -H 'Content-Type: application/json' \
+            -d '{"status":"completed"}' \
+            "$BASE/projects/proj-1/tasks/task-1/status")
+          test "$code" = "200"
+
+          echo "✅ Endpoint matrix OK"
+
+      - name: Show server.log (on failure)
+        if: failure()
+        run: |
+          echo "== server.log =="
+          tail -n +1 server.log || true
+
       - name: Stop server (always)
         if: always()
         run: |
           if [ -f .pidfile ]; then
             kill $(cat .pidfile) || true
+            sleep 1
+            echo "== final server.log =="
+            tail -n +1 server.log || true
           fi
-          echo "== final server.log =="
-          [ -f server.log ] && tail -n 200 server.log || true
