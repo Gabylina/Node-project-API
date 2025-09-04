@@ -75,7 +75,7 @@ jobs:
           set -euo pipefail
           BASE="http://127.0.0.1:3000/api"
 
-          echo "== /api/ping ==" 
+          echo "== /api/ping =="
           code=$(curl -sS -o /dev/null -w "%{http_code}" "$BASE/ping")
           test "$code" = "200"
 
@@ -96,35 +96,40 @@ jobs:
           if [ "$code" != "200" ]; then
             echo "::error::Login failed ($code)"; cat login.json || true; exit 1
           fi
+          TOKEN=$(jq -r '.token' login.json)
+          AUTH=(-H "Authorization: Bearer $TOKEN")
 
           echo "== /api/auth/me =="
-          code=$(curl -sS -o me.json -w "%{http_code}" "$BASE/auth/me")
+          code=$(curl -sS -o me.json -w "%{http_code}" "${AUTH[@]}" "$BASE/auth/me")
           test "$code" = "200"
 
           echo "== GET /api/projects =="
-          code=$(curl -sS -o projects.json -w "%{http_code}" "$BASE/projects")
+          code=$(curl -sS -o projects.json -w "%{http_code}" "${AUTH[@]}" "$BASE/projects")
           test "$code" = "200"
 
           echo "== POST /api/projects =="
-          code=$(curl -sS -o project_new.json -w "%{http_code}" -H 'Content-Type: application/json' \
+          code=$(curl -sS -o project_new.json -w "%{http_code}" "${AUTH[@]}" -H 'Content-Type: application/json' \
             -d '{"name":"CI Project","description":"created from CI"}' \
             "$BASE/projects")
           test "$code" = "201"
+          PROJECT_ID=$(jq -r '.id' project_new.json)
 
-          echo "== GET /api/projects/proj-1/tasks =="
-          code=$(curl -sS -o tasks.json -w "%{http_code}" "$BASE/projects/proj-1/tasks")
+          echo "== GET /api/projects/:project/tasks =="
+          code=$(curl -sS -o tasks.json -w "%{http_code}" "${AUTH[@]}" "$BASE/projects/$PROJECT_ID/tasks")
           test "$code" = "200"
 
-          echo "== POST /api/projects/proj-1/tasks =="
-          code=$(curl -sS -o task_new.json -w "%{http_code}" -H 'Content-Type: application/json' \
-            -d '{"title":"CI Task","description":"demo"}' \
-            "$BASE/projects/proj-1/tasks")
+          echo "== POST /api/projects/:project/tasks =="
+          # Tu Task.store espera { name, description, status? } (no "title")
+          code=$(curl -sS -o task_new.json -w "%{http_code}" "${AUTH[@]}" -H 'Content-Type: application/json' \
+            -d '{"name":"CI Task","description":"demo"}' \
+            "$BASE/projects/$PROJECT_ID/tasks")
           test "$code" = "201"
+          TASK_ID=$(jq -r '.id' task_new.json)
 
-          echo "== POST /api/projects/proj-1/tasks/task-1/status =="
-          code=$(curl -sS -o task_status.json -w "%{http_code}" -H 'Content-Type: application/json' \
+          echo "== POST /api/projects/:project/tasks/:task/status =="
+          code=$(curl -sS -o task_status.json -w "%{http_code}" "${AUTH[@]}" -H 'Content-Type: application/json' \
             -d '{"status":"completed"}' \
-            "$BASE/projects/proj-1/tasks/task-1/status")
+            "$BASE/projects/$PROJECT_ID/tasks/$TASK_ID/status")
           test "$code" = "200"
 
           echo "✅ Endpoint matrix OK"
